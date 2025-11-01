@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Dino Stat Chart (Image URL + Threshold + Search & Sort)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, Arial, sans-serif; background:#111; color:#eee; margin:0; padding:24px; }
+  h2 { margin:0 0 16px; }
+  .card { max-width:1100px; margin:0 auto; background:#181818; border:1px solid #2a2a2a; border-radius:14px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,0.3); }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  input[type="text"], input[type="url"], input[type="number"], select {
+    flex:1; min-width:160px; background:#101010; color:#eee; border:1px solid #333; border-radius:10px; padding:10px 12px; outline:none;
+  }
+  input::placeholder { color:#888; }
+  button {
+    background:#32a852; color:#fff; border:none; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600;
+  }
+  button:hover { filter:brightness(1.08); }
+  button.secondary { background:#2a2a2a; }
+  button.danger { background:#b44646; }
+  .btn-ghost { background:#2a2a2a; opacity:.9; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th, td { border-bottom:1px solid #2a2a2a; padding:10px; text-align:center; }
+  th { background:#202020; position:sticky; top:0; z-index:1; }
+  tbody tr:hover { background:#202020; }
+  .muted { color:#9a9a9a; font-size:12px; margin-top:6px; }
+  .actions { display:flex; gap:6px; justify-content:center; }
+  .low { color:#3cd33c; font-weight:600; }   /* 임계값 미만 => 초록 */
+  .high { color:#ff4d4d; font-weight:600; }  /* 임계값 이상 => 빨강 */
+  .thumb { width:84px; height:84px; object-fit:cover; border-radius:10px; border:1px solid #333; background:#0f0f0f; }
+  .img-cell { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
+  .link-btn { background:#2c2c2c; padding:6px 10px; border-radius:8px; font-size:12px; }
+  .section-title { margin:14px 0 8px; font-weight:700; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .pill { padding:8px 10px; border-radius:999px; background:#222; border:1px solid #333; }
+  .sort-ind { font-size:12px; color:#bbb; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h2>🦖 Dino Stat Chart — (이름 / HP / DMG / Image URL)</h2>
+
+    <!-- 입력 영역 -->
+    <div class="row">
+      <input type="text" id="dinoName" placeholder="Dino name (예: Rex, Dread, Magma)" />
+      <input type="number" id="hp" placeholder="HP (정수)" min="0" step="1" />
+      <input type="number" id="dmg" placeholder="DMG (정수)" min="0" step="1" />
+      <input type="url" id="imgUrl" placeholder="Image URL (예: https://...jpg / .png)" />
+      <button id="addBtn">Add</button>
+      <button id="resetBtn" class="danger">Reset All</button>
+    </div>
+
+    <!-- 검색 & 정렬 컨트롤 -->
+    <div class="section-title">🔎 검색 & ↕ 정렬</div>
+    <div class="row controls">
+      <input type="text" id="search" class="pill" placeholder="이름 검색 (부분 일치)" style="flex:2; min-width:220px;" />
+      <div class="pill" style="display:flex; gap:8px;">
+        <button id="sortName" class="secondary">Sort Name <span id="indName" class="sort-ind"></span></button>
+        <button id="sortHP" class="secondary">Sort HP <span id="indHP" class="sort-ind"></span></button>
+        <button id="sortDMG" class="secondary">Sort DMG <span id="indDMG" class="sort-ind"></span></button>
+        <button id="sortReset" class="btn-ghost">Reset Sort</button>
+      </div>
+    </div>
+
+    <!-- 설정 영역 -->
+    <div class="section-title">⚙️ 표시 임계값</div>
+    <div class="row">
+      <label style="display:flex; align-items:center; gap:8px;">
+        <span>임계값(HP·DMG 공통):</span>
+        <input type="number" id="threshold" min="0" step="1" style="max-width:140px;" />
+      </label>
+      <label style="display:flex; align-items:center; gap:8px;">
+        <span>조건:</span>
+        <select id="rule" style="max-width:220px;">
+          <option value="ge">값 ≥ 임계값 → 빨강 / 미만 → 초록</option>
+          <option value="gt">값 > 임계값 → 빨강 / 이하 → 초록</option>
+        </select>
+      </label>
+      <button id="saveCfg" class="secondary">Save Config</button>
+      <button id="defaultCfg" class="secondary">Default</button>
+    </div>
+    <div class="muted">검색어/정렬은 즉시 적용. 임계값 설정은 저장 시 즉시 반영됩니다.</div>
+
+    <!-- 테이블 -->
+    <table id="dinoTable">
+      <thead>
+        <tr>
+          <th style="width:26%">Dino Name</th>
+          <th style="width:14%">HP</th>
+          <th style="width:14%">DMG</th>
+          <th style="width:26%">Image</th>
+          <th style="width:20%">Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+(() => {
+  const LS_KEY_DATA = 'dino_stats_v5_imgurl_searchsort';
+  const LS_KEY_CFG  = 'dino_stats_cfg_v1';
+
+  /** 데이터/설정 **/
+  /** @type {{id:string,name:string,hp:number,dmg:number,imageUrl?:string}[]} */
+  let dinos = [];
+  let cfg = { threshold: 200, rule: 'ge' }; // 값 ≥ 임계값이면 빨강
+  let view = { search: '', sortKey: null, sortDir: 'desc' }; // sortKey: 'name' | 'hp' | 'dmg' | null
+
+  /** 엘리먼트 **/
+  const $name = document.getElementById('dinoName');
+  const $hp = document.getElementById('hp');
+  const $dmg = document.getElementById('dmg');
+  const $imgUrl = document.getElementById('imgUrl');
+  const $tbody = document.querySelector('#dinoTable tbody');
+
+  const $addBtn = document.getElementById('addBtn');
+  const $resetBtn = document.getElementById('resetBtn');
+
+  const $threshold = document.getElementById('threshold');
+  const $rule = document.getElementById('rule');
+  const $saveCfg = document.getElementById('saveCfg');
+  const $defaultCfg = document.getElementById('defaultCfg');
+
+  const $search = document.getElementById('search');
+  const $sortName = document.getElementById('sortName');
+  const $sortHP = document.getElementById('sortHP');
+  const $sortDMG = document.getElementById('sortDMG');
+  const $sortReset = document.getElementById('sortReset');
+  const $indName = document.getElementById('indName');
+  const $indHP = document.getElementById('indHP');
+  const $indDMG = document.getElementById('indDMG');
+
+  /** 유틸 **/
+  function uid() { return Math.random().toString(36).slice(2, 10); }
+  function saveData() { localStorage.setItem(LS_KEY_DATA, JSON.stringify(dinos)); }
+  function loadData() {
+    try { const raw = JSON.parse(localStorage.getItem(LS_KEY_DATA)); dinos = Array.isArray(raw) ? raw : []; }
+    catch { dinos = []; }
+  }
+  function saveCfg() { localStorage.setItem(LS_KEY_CFG, JSON.stringify(cfg)); }
+  function loadCfg() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_KEY_CFG));
+      if (raw && typeof raw === 'object') {
+        if (Number.isFinite(raw.threshold) && raw.threshold >= 0) cfg.threshold = Math.trunc(raw.threshold);
+        if (raw.rule === 'ge' || raw.rule === 'gt') cfg.rule = raw.rule;
+      }
+    } catch {}
+    $threshold.value = cfg.threshold;
+    $rule.value = cfg.rule;
+  }
+  function clearInputs() {
+    $name.value = ''; $hp.value = ''; $dmg.value = ''; $imgUrl.value = ''; $name.focus();
+  }
+  function escapeHtml(s) { return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  function validUrl(u) {
+    try { const url = new URL(u); return ['http:', 'https:'].includes(url.protocol); }
+    catch { return false; }
+  }
+
+  /** 임계값 표시 로직 **/
+  function isHigh(value) { return (cfg.rule === 'ge') ? (value >= cfg.threshold) : (value > cfg.threshold); }
+  function colorClass(value) { return isHigh(value) ? 'high' : 'low'; }
+
+  /** 검색 & 정렬 **/
+  function applySearchAndSort(list) {
+    const term = view.search.trim().toLowerCase();
+    let out = term ? list.filter(d => d.name.toLowerCase().includes(term)) : [...list];
+
+    if (view.sortKey) {
+      const k = view.sortKey;
+      const dir = view.sortDir === 'asc' ? 1 : -1;
+      out.sort((a,b) => {
+        let va = a[k], vb = b[k];
+        if (k === 'name') {
+          va = va.toLowerCase(); vb = vb.toLowerCase();
+          if (va < vb) return -1 * dir;
+          if (va > vb) return  1 * dir;
+          return 0;
+        } else {
+          // 숫자 정렬
+          return (va - vb) * dir;
+        }
+      });
+    }
+    return out;
+  }
+
+  function setSort(key) {
+    if (view.sortKey === key) {
+      // 같은 키 클릭 시 방향 토글
+      view.sortDir = (view.sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+      view.sortKey = key;
+      view.sortDir = (key === 'name') ? 'asc' : 'desc'; // 이름은 기본 오름차순, 숫자는 기본 내림차순
+    }
+    render();
+  }
+  function resetSort() {
+    view.sortKey = null; view.sortDir = 'desc';
+    render();
+  }
+  function updateSortIndicators() {
+    $indName.textContent = (view.sortKey === 'name') ? (view.sortDir === 'asc' ? '↑' : '↓') : '';
+    $indHP.textContent   = (view.sortKey === 'hp')   ? (view.sortDir === 'asc' ? '↑' : '↓') : '';
+    $indDMG.textContent  = (view.sortKey === 'dmg')  ? (view.sortDir === 'asc' ? '↑' : '↓') : '';
+  }
+
+  /** 렌더링 **/
+  function render() {
+    $tbody.innerHTML = '';
+    updateSortIndicators();
+
+    const display = applySearchAndSort(dinos);
+
+    if (!display.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="5" class="muted">표시할 데이터가 없습니다. 검색어/정렬을 확인해 주세요.</td>`;
+      $tbody.appendChild(tr);
+      return;
+    }
+
+    display.forEach(d => {
+      const img = (d.imageUrl && validUrl(d.imageUrl)) ? d.imageUrl : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(d.name)}</td>
+        <td class="${colorClass(d.hp)}">${d.hp}</td>
+        <td class="${colorClass(d.dmg)}">${d.dmg}</td>
+        <td class="img-cell">
+          ${img
+            ? `<a href="${img}" target="_blank" rel="noopener noreferrer" title="Open image">
+                 <img class="thumb" loading="lazy" src="${img}" alt="thumb" onerror="this.src='';this.closest('td').querySelector('.img-note').textContent='(이미지 로드 실패)';" />
+               </a>`
+            : `<span class="muted">(이미지 없음)</span>`
+          }
+          <button class="link-btn secondary" data-open="${d.id}">Open</button>
+          <div class="img-note muted"></div>
+        </td>
+        <td class="actions">
+          <button class="secondary" data-edit="${d.id}">Edit</button>
+          <button class="danger" data-del="${d.id}">Delete</button>
+        </td>
+      `;
+      $tbody.appendChild(tr);
+    });
+  }
+
+  /** 액션들 **/
+  function addDino() {
+    const name = $name.value.trim();
+    const hp = Number($hp.value);
+    const dmg = Number($dmg.value);
+    const imageUrl = $imgUrl.value.trim();
+
+    if (!name) return alert('이름을 입력해 주세요.');
+    if (!Number.isFinite(hp) || hp < 0) return alert('HP는 0 이상의 정수로 입력해 주세요.');
+    if (!Number.isFinite(dmg) || dmg < 0) return alert('DMG는 0 이상의 정수로 입력해 주세요.');
+    if (imageUrl && !validUrl(imageUrl)) return alert('Image URL 형식이 올바르지 않습니다.');
+
+    dinos.push({ id: uid(), name, hp: Math.trunc(hp), dmg: Math.trunc(dmg), imageUrl: imageUrl || '' });
+    saveData(); clearInputs(); render();
+  }
+  function deleteDino(id) {
+    dinos = dinos.filter(d => d.id !== id);
+    saveData(); render();
+  }
+  function editDino(id) {
+    const t = dinos.find(d => d.id === id);
+    if (!t) return;
+
+    const name = prompt('Dino name 수정', t.name);
+    if (name === null) return;
+    const hpStr = prompt('HP 수정 (정수)', String(t.hp));
+    if (hpStr === null) return;
+    const dmgStr = prompt('DMG 수정 (정수)', String(t.dmg));
+    if (dmgStr === null) return;
+    const urlStr = prompt('Image URL 수정 (빈칸 가능)', t.imageUrl || '');
+    if (urlStr === null) return;
+
+    const hp = Number(hpStr), dmg = Number(dmgStr);
+    if (!name.trim()) return alert('이름은 비울 수 없어요.');
+    if (!Number.isFinite(hp) || hp < 0) return alert('HP는 0 이상의 정수로 입력해 주세요.');
+    if (!Number.isFinite(dmg) || dmg < 0) return alert('DMG는 0 이상의 정수로 입력해 주세요.');
+    if (urlStr.trim() && !validUrl(urlStr.trim())) return alert('Image URL 형식이 올바르지 않습니다.');
+
+    t.name = name.trim(); t.hp = Math.trunc(hp); t.dmg = Math.trunc(dmg); t.imageUrl = urlStr.trim();
+    saveData(); render();
+  }
+  function openImageById(id) {
+    const t = dinos.find(d => d.id === id);
+    if (!t) return;
+    if (!t.imageUrl) return alert('이미지 URL이 없습니다.');
+    if (!validUrl(t.imageUrl)) return alert('Image URL 형식이 올바르지 않습니다.');
+    window.open(t.imageUrl, '_blank', 'noopener');
+  }
+  function resetAll() {
+    if (!confirm('모든 데이터를 삭제할까요? (되돌릴 수 없음)')) return;
+    dinos = []; saveData(); render(); clearInputs();
+  }
+
+  /** 설정 저장/복원 **/
+  function applyConfigFromUI() {
+    const thr = Number($threshold.value);
+    const rule = $rule.value;
+    if (!Number.isFinite(thr) || thr < 0) return alert('임계값은 0 이상의 정수로 입력해 주세요.');
+    cfg.threshold = Math.trunc(thr);
+    cfg.rule = (rule === 'gt') ? 'gt' : 'ge';
+    saveCfg();
+    render();
+  }
+  function setDefaultCfg() {
+    cfg = { threshold: 200, rule: 'ge' };
+    $threshold.value = cfg.threshold;
+    $rule.value = cfg.rule;
+    saveCfg();
+    render();
+  }
+
+  /** 이벤트 바인딩 **/
+  $addBtn.addEventListener('click', addDino);
+  $resetBtn.addEventListener('click', resetAll);
+  [$name, $hp, $dmg, $imgUrl].forEach($el => {
+    $el.addEventListener('keydown', e => { if (e.key === 'Enter') addDino(); });
+  });
+
+  // 테이블 내 버튼 위임
+  $tbody.addEventListener('click', e => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
+    const delId = t.getAttribute('data-del');
+    const editId = t.getAttribute('data-edit');
+    const openId = t.getAttribute('data-open');
+    if (delId) deleteDino(delId);
+    if (editId) editDino(editId);
+    if (openId) openImageById(openId);
+  });
+
+  // 검색(디바운스)
+  let searchTimer = null;
+  $search.addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      view.search = $search.value || '';
+      render();
+    }, 120);
+  });
+
+  // 정렬 버튼
+  $sortName.addEventListener('click', () => setSort('name'));
+  $sortHP.addEventListener('click', () => setSort('hp'));
+  $sortDMG.addEventListener('click', () => setSort('dmg'));
+  $sortReset.addEventListener('click', resetSort);
+
+  // 임계값 설정
+  $saveCfg.addEventListener('click', applyConfigFromUI);
+  $defaultCfg.addEventListener('click', setDefaultCfg);
+
+  // 초기 로드
+  loadData();
+  loadCfg();
+  render();
+})();
+</script>
+</body>
+</html>
