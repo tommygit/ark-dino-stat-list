@@ -61,6 +61,19 @@
         <button id="sortHP" class="secondary">Sort HP <span id="indHP" class="sort-ind"></span></button>
         <button id="sortDMG" class="secondary">Sort DMG <span id="indDMG" class="sort-ind"></span></button>
         <button id="sortReset" class="btn-ghost">Reset Sort</button>
+        <button id="sortReset" class="btn-ghost">Reset Sort</button>
+</div>
+
+<!-- 여기 아래에 새 코드 추가 -->
+<div class="controls" style="gap:8px; margin-top:8px;">
+  <button type="button" onclick="exportAllLS()">Export JSON</button>
+  <label class="link-btn">
+    Import JSON
+    <input type="file" accept="application/json" style="display:none"
+           onchange="if(this.files[0]) importAllLS(this.files[0])">
+  </label>
+</div>
+
       </div>
     </div>
 
@@ -365,7 +378,51 @@
   render();
 })();
 </script>
+  ...
+<!-- 기존 코드 끝나는 부분 -->
+<script>
+// 로컬스토리지 전체 백업
+function exportAllLS() {
+  const dump = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    dump[k] = localStorage.getItem(k);
+  }
+  const blob = new Blob([JSON.stringify({ origin: location.origin, data: dump }, null, 2)],
+                        { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ark-dino-list.backup.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// 로컬스토리지 전체 복구
+function importAllLS(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!parsed || typeof parsed !== 'object' || !parsed.data) {
+        alert('잘못된 백업 파일입니다.');
+        return;
+      }
+      const entries = parsed.data;
+      Object.keys(entries).forEach(k => localStorage.setItem(k, entries[k]));
+      alert('가져오기 완료! 페이지를 새로고침합니다.');
+      location.reload();
+    } catch (err) {
+      alert('가져오기 실패: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+</script>
 </body>
 </html>
+
+</body>
+</html>
+
 
 
